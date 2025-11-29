@@ -12,8 +12,7 @@ git pull origin main
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Restart services (Assuming we use systemd)
-systemctl restart discord-bot
-systemctl restart discord-manager
+# Restart services using PM2
+pm2 restart ecosystem.config.js --update-env
 
 echo "Deployment complete!"

@@ -1,21 +1,21 @@
 module.exports = {
   apps: [
     {
-      name: "ssc-scheduler",
+      name: "ssch-scheduler",
       script: "main.py",
       interpreter: "venv/bin/python", // Use the virtual env python
       autorestart: true,
       watch: false,
     },
     {
-      name: "ssc-manager",
+      name: "ssch-manager",
       script: "bot.py",
       interpreter: "venv/bin/python",
       autorestart: true,
       watch: false,
     },
     {
-      name: "ssc-webhook",
+      name: "ssch-webhook",
       script: "webhook_server.py",
       interpreter: "venv/bin/python",
       autorestart: true,

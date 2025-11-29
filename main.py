@@ -1,3 +1,4 @@
+# Discord Scheduler Bot - Auto-Deployed via GitHub Actions
 import json
 import requests
 import pytz

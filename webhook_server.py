@@ -4,10 +4,18 @@ import os
 import hmac
 import hashlib
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 app = Flask(__name__)
 
-# Secret for GitHub Webhook (We will set this later)
-WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', 'my_secret_key')
+# Secret for GitHub Webhook
+WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET')
+
+if not WEBHOOK_SECRET:
+    print("Error: WEBHOOK_SECRET not found in .env")
+
 
 def verify_signature(payload_body, secret_token, signature_header):
     """Verify that the payload was sent from GitHub by validating SHA256."""

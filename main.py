@@ -789,45 +789,147 @@ class DiscordPermissionScheduler:
         guild_id: str,
         reason: str = "Scheduled channel lock"
     ) -> bool:
-        """Lock a channel (deny SEND_MESSAGES for @everyone)"""
+        """Lock a channel (deny SEND_MESSAGES for @everyone) - preserves other permissions"""
         
-        permissions = {
-            'overwrites': [
-                {
-                    'id': guild_id,
-                    'type': 0,
-                    'deny': str(1 << 11),
-                    'allow': '0'
-                }
-            ]
+        endpoint = f'{self.DISCORD_API_BASE}/channels/{channel_id}/permissions/{guild_id}'
+        headers = self._get_discord_headers(self.discord_token)
+        
+        if reason:
+            headers['X-Audit-Log-Reason'] = reason
+        
+        payload = {
+            'type': 0,  # 0 = role, 1 = member
+            'deny': str(1 << 11),  # SEND_MESSAGES = 2048
         }
         
-        return self.update_channel_permissions(
-            channel_id, permissions, reason
-        )
-    
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                time.sleep(random.uniform(0.1, 0.5))
+                
+                response = self.session.put(  # ✅ PUT, not PATCH
+                    endpoint,
+                    headers=headers,
+                    json=payload,
+                    timeout=15
+                )
+                
+                if self._handle_rate_limit(response, endpoint):
+                    continue
+                
+                if response.status_code in [200, 204]:
+                    logging.info(f"[SUCCESS] Channel {channel_id} LOCKED (preserved other permissions)")
+                    return True
+                
+                elif response.status_code == 401:
+                    logging.error(f"[ERROR] Unauthorized - Invalid token")
+                    return False
+                
+                elif response.status_code == 403:
+                    logging.error(f"[ERROR] Forbidden - Insufficient permissions")
+                    return False
+                
+                elif response.status_code == 404:
+                    logging.error(f"[ERROR] Channel {channel_id} not found")
+                    return False
+                
+                else:
+                    logging.error(f"[ERROR] API Error {response.status_code}: {response.text}")
+                    
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) + random.uniform(0, 1)
+                        logging.info(f"Retrying in {wait_time:.2f}s...")
+                        time.sleep(wait_time)
+                        continue
+                    
+                    return False
+                    
+            except requests.exceptions.Timeout:
+                logging.error(f"[ERROR] Request timeout (attempt {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                return False
+                
+            except requests.exceptions.RequestException as e:
+                logging.error(f"[ERROR] Request exception: {str(e)}")
+                return False
+        
+        return False
+
     def unlock_channel(
         self,
         channel_id: str,
         guild_id: str,
         reason: str = "Scheduled channel unlock"
     ) -> bool:
-        """Unlock a channel (allow SEND_MESSAGES for @everyone)"""
+        """Unlock a channel (allow SEND_MESSAGES for @everyone) - preserves other permissions"""
         
-        permissions = {
-            'overwrites': [
-                {
-                    'id': guild_id,
-                    'type': 0,
-                    'allow': str(1 << 11),
-                    'deny': '0'
-                }
-            ]
+        endpoint = f'{self.DISCORD_API_BASE}/channels/{channel_id}/permissions/{guild_id}'
+        headers = self._get_discord_headers(self.discord_token)
+        
+        if reason:
+            headers['X-Audit-Log-Reason'] = reason
+        
+        payload = {
+            'type': 0,  # 0 = role, 1 = member
+            'allow': str(1 << 11),  # SEND_MESSAGES = 2048
         }
         
-        return self.update_channel_permissions(
-            channel_id, permissions, reason
-        )
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                time.sleep(random.uniform(0.1, 0.5))
+                
+                response = self.session.put(  # ✅ PUT, not PATCH
+                    endpoint,
+                    headers=headers,
+                    json=payload,
+                    timeout=15
+                )
+                
+                if self._handle_rate_limit(response, endpoint):
+                    continue
+                
+                if response.status_code in [200, 204]:
+                    logging.info(f"[SUCCESS] Channel {channel_id} UNLOCKED (preserved other permissions)")
+                    return True
+                
+                elif response.status_code == 401:
+                    logging.error(f"[ERROR] Unauthorized - Invalid token")
+                    return False
+                
+                elif response.status_code == 403:
+                    logging.error(f"[ERROR] Forbidden - Insufficient permissions")
+                    return False
+                
+                elif response.status_code == 404:
+                    logging.error(f"[ERROR] Channel {channel_id} not found")
+                    return False
+                
+                else:
+                    logging.error(f"[ERROR] API Error {response.status_code}: {response.text}")
+                    
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) + random.uniform(0, 1)
+                        logging.info(f"Retrying in {wait_time:.2f}s...")
+                        time.sleep(wait_time)
+                        continue
+                    
+                    return False
+                    
+            except requests.exceptions.Timeout:
+                logging.error(f"[ERROR] Request timeout (attempt {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                return False
+                
+            except requests.exceptions.RequestException as e:
+                logging.error(f"[ERROR] Request exception: {str(e)}")
+                return False
+        
+        return False
     
     def parse_time_format(self, time_str: str) -> Dict[str, int]:
         """Parse time string formats"""

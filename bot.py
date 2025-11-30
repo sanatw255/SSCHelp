@@ -1,5 +1,5 @@
 # Discord Manager Bot - Auto-Deployed via GitHub Actions
-# Created By: Aloy Saha
+# Created By: Aloy Saha, Sanat Wadyalkar
 import discord
 from discord import app_commands
 from discord.ext import commands

@@ -15,7 +15,7 @@
       "reason": "Scheduled unlock"
     }
   },
-  "opening_message": "$add-money-role cash <@1371908000540917820> 10e9",
+  "opening_message": "$add-money-role cash <@&1371908000540917820> 10e9",
   "closing_message": "The casino will be opened tomorrow at 7 PM.",
   "auto_cash": {
     "enabled": false,

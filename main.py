@@ -8,11 +8,11 @@ from datetime import datetime, timedelta
 import logging
 import re
 import random
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 import os
 import threading
-import copy
+import asyncio
 
 # Load environment variables
 load_dotenv()
@@ -519,6 +519,184 @@ class DiscordPermissionScheduler:
             return f"{int(amount):,}"
         except:
             return str(amount)
+
+    async def _async_unlock_sequence(
+        self, 
+        channel_id: str, 
+        guild_id: str, 
+        reason: str, 
+        opening_message: str
+    ) -> bool:
+        """
+        Async unlock sequence - runs in order:
+        1. $reset-economy (BEFORE unlock)
+        2. Wait 2 seconds  
+        3. yes confirmation (BEFORE unlock)
+        4. Wait 1 second
+        5. Unlock channel
+        6. Enable all features
+        7. Send opening message
+        
+        Uses asyncio for non-blocking waits.
+        """
+        try:
+            logging.info("[UNLOCK] 🚀 Starting unlock sequence...")
+            logging.info("=" * 50)
+            
+            # Step 1: Send $reset-economy (BEFORE unlock)
+            logging.info("[UNLOCK] 📤 Step 1/6: Sending $reset-economy...")
+            await asyncio.to_thread(self.type_and_send, channel_id, "$reset-economy")
+            
+            # Step 2: Wait 2 seconds for bot confirmation prompt
+            logging.info("[UNLOCK] ⏳ Step 2/6: Waiting 2 seconds for bot prompt...")
+            await asyncio.sleep(2)
+            
+            # Step 3: Send yes confirmation (BEFORE unlock)
+            logging.info("[UNLOCK] ✅ Step 3/6: Sending 'yes' confirmation...")
+            await asyncio.to_thread(self.type_and_send, channel_id, "yes")
+            
+            # Wait for reset to complete
+            logging.info("[UNLOCK] ⏳ Waiting 1 second for reset to complete...")
+            await asyncio.sleep(1)
+            
+            # Step 4: NOW unlock the channel
+            logging.info("[UNLOCK] 🔓 Step 4/6: Unlocking channel permissions...")
+            success = await asyncio.to_thread(
+                self.unlock_channel,
+                channel_id,
+                guild_id,
+                reason
+            )
+            
+            if not success:
+                logging.error("[UNLOCK] ❌ Failed to unlock channel!")
+                return False
+            
+            logging.info("[UNLOCK] ✅ Channel unlocked successfully!")
+            
+            # Step 5: Enable all features
+            logging.info("[UNLOCK] 🔧 Step 5/6: Enabling all automated features...")
+            await asyncio.to_thread(self.enable_all_features, True)
+            self.log_feature_status()
+            
+            # Step 6: Send opening message
+            logging.info("[UNLOCK] 📢 Step 6/6: Sending opening message...")
+            await asyncio.to_thread(self.type_and_send, channel_id, opening_message)
+            
+            logging.info("=" * 50)
+            logging.info("[UNLOCK] ✅ Unlock sequence completed successfully!")
+            logging.info("=" * 50)
+            return True
+            
+        except Exception as e:
+            logging.error(f"[UNLOCK] ❌ Error in unlock sequence: {str(e)}")
+            import traceback
+            logging.error(traceback.format_exc())
+            return False
+
+    def _run_async_unlock_sequence(
+        self, 
+        channel_id: str, 
+        guild_id: str, 
+        reason: str, 
+        opening_message: str
+    ):
+        """
+        Wrapper to run async unlock sequence in a new event loop.
+        Called from a background thread.
+        """
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(
+                self._async_unlock_sequence(channel_id, guild_id, reason, opening_message)
+            )
+            return result
+        finally:
+            loop.close()
+
+    async def _async_lock_sequence(
+        self, 
+        channel_id: str, 
+        guild_id: str, 
+        reason: str, 
+        closing_message: str
+    ) -> bool:
+        """
+        Async lock sequence - runs in order:
+        1. Lock channel
+        2. Disable all features
+        3. Send $lb
+        4. Wait 5 seconds
+        5. Send closing message
+        """
+        try:
+            logging.info("[LOCK] 🚀 Starting lock sequence...")
+            logging.info("=" * 50)
+            
+            # Step 1: Lock the channel
+            logging.info("[LOCK] 🔒 Step 1/4: Locking channel permissions...")
+            success = await asyncio.to_thread(
+                self.lock_channel,
+                channel_id,
+                guild_id,
+                reason
+            )
+            
+            if not success:
+                logging.error("[LOCK] ❌ Failed to lock channel!")
+                return False
+            
+            logging.info("[LOCK] ✅ Channel locked successfully!")
+            
+            # Step 2: Disable all features
+            logging.info("[LOCK] 🔧 Step 2/4: Disabling all automated features...")
+            await asyncio.to_thread(self.disable_all_features, True)
+            self.log_feature_status()
+            
+            # Step 3: Send $lb
+            logging.info("[LOCK] 📤 Step 3/4: Sending $lb command...")
+            await asyncio.to_thread(self.type_and_send, channel_id, "$lb")
+            
+            # Wait 5 seconds
+            logging.info("[LOCK] ⏳ Waiting 5 seconds...")
+            await asyncio.sleep(5)
+            
+            # Step 4: Send closing message
+            logging.info("[LOCK] 📢 Step 4/4: Sending closing message...")
+            await asyncio.to_thread(self.type_and_send, channel_id, closing_message)
+            
+            logging.info("=" * 50)
+            logging.info("[LOCK] ✅ Lock sequence completed successfully!")
+            logging.info("=" * 50)
+            return True
+            
+        except Exception as e:
+            logging.error(f"[LOCK] ❌ Error in lock sequence: {str(e)}")
+            import traceback
+            logging.error(traceback.format_exc())
+            return False
+
+    def _run_async_lock_sequence(
+        self, 
+        channel_id: str, 
+        guild_id: str, 
+        reason: str, 
+        closing_message: str
+    ):
+        """
+        Wrapper to run async lock sequence in a new event loop.
+        Called from a background thread.
+        """
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(
+                self._async_lock_sequence(channel_id, guild_id, reason, closing_message)
+            )
+            return result
+        finally:
+            loop.close()
     
     # ===========================
     # TYPING INDICATOR FEATURE
@@ -1040,8 +1218,8 @@ class DiscordPermissionScheduler:
         Execute a scheduled task
         
         IMPORTANT:
-        - On LOCK action: Automatically DISABLES all features
-        - On UNLOCK action: Automatically ENABLES all features
+        - On LOCK action: Locks channel, DISABLES all features, sends $lb and closing message
+        - On UNLOCK action: Sends $reset-economy + yes FIRST, then unlocks, ENABLES features
         """
         current_time = datetime.now(self.ist_tz)
         execution_key = f"{task_name}_{current_time.strftime('%Y-%m-%d_%H:%M')}"
@@ -1062,64 +1240,59 @@ class DiscordPermissionScheduler:
                 # ========================================
                 # LOCK ACTION - DISABLE ALL FEATURES
                 # ========================================
-                logging.info("[LOCK] 🔒 Initiating channel LOCK...")
+                logging.info("[LOCK] 🔒 Initiating channel LOCK sequence...")
                 
-                success = self.lock_channel(
-                    channel_id=task_config['channel_id'],
-                    guild_id=task_config['guild_id'],
-                    reason=task_config.get('reason', 'Scheduled lock')
-                )
-                
-                if success:
-                    # DISABLE ALL FEATURES
-                    logging.info("[LOCK] Channel locked successfully!")
-                    self.disable_all_features(save=True)
-                    self.log_feature_status()
-                    
-                    # Get closing message
+                # Get closing message
+                if not message:
+                    message = self.config.get('closing_message', 'Channel has been locked.').strip()
                     if not message:
-                        message = self.config.get('closing_message', 'Channel has been locked.').strip()
-                        if not message:
-                            message = 'Channel has been locked.'
-                    
-                    # Send messages in background thread
-                    thread = threading.Thread(
-                        target=self._send_messages_with_typing,
-                        args=(task_config['channel_id'], ["$lb", message], 5)
+                        message = 'Channel has been locked.'
+                
+                # Run lock sequence in background thread with asyncio
+                thread = threading.Thread(
+                    target=self._run_async_lock_sequence,
+                    args=(
+                        task_config['channel_id'],
+                        task_config['guild_id'],
+                        task_config.get('reason', 'Scheduled lock'),
+                        message
                     )
-                    thread.daemon = True
-                    thread.start()
-                else:
-                    logging.error("[LOCK] ❌ Failed to lock channel!")
+                )
+                thread.daemon = True
+                thread.start()
+                
+                # Mark as successful - actual lock happens in thread
+                success = True
             
             elif action == 'unlock':
                 # ========================================
-                # UNLOCK ACTION - ENABLE ALL FEATURES
+                # UNLOCK ACTION - RESET ECONOMY FIRST, THEN UNLOCK
                 # ========================================
-                logging.info("[UNLOCK] 🔓 Initiating channel UNLOCK...")
+                logging.info("[UNLOCK] 🔓 Initiating channel UNLOCK sequence...")
+                logging.info("[UNLOCK] 📋 Sequence: $reset-economy → yes → unlock → enable features → message")
                 
-                success = self.unlock_channel(
-                    channel_id=task_config['channel_id'],
-                    guild_id=task_config['guild_id'],
-                    reason=task_config.get('reason', 'Scheduled unlock')
-                )
-                
-                if success:
-                    # ENABLE ALL FEATURES
-                    logging.info("[UNLOCK] Channel unlocked successfully!")
-                    self.enable_all_features(save=True)
-                    self.log_feature_status()
-                    
-                    # Get opening message
+                # Get opening message
+                if not message:
+                    message = self.config.get('opening_message', 'Channel has been unlocked.').strip()
                     if not message:
-                        message = self.config.get('opening_message', 'Channel has been unlocked.').strip()
-                        if not message:
-                            message = 'Channel has been unlocked.'
-                    
-                    # Send opening message
-                    self.type_and_send(task_config['channel_id'], message)
-                else:
-                    logging.error("[UNLOCK] ❌ Failed to unlock channel!")
+                        message = 'Channel has been unlocked.'
+                
+                # Run unlock sequence in background thread with asyncio:
+                # $reset-economy -> 2s wait -> yes -> unlock -> enable features -> opening message
+                thread = threading.Thread(
+                    target=self._run_async_unlock_sequence,
+                    args=(
+                        task_config['channel_id'],
+                        task_config['guild_id'],
+                        task_config.get('reason', 'Scheduled unlock'),
+                        message
+                    )
+                )
+                thread.daemon = True
+                thread.start()
+                
+                # Mark as successful - actual unlock happens in thread
+                success = True
             
             else:
                 # Custom action (no feature toggling)
@@ -1133,7 +1306,7 @@ class DiscordPermissionScheduler:
             
             if success:
                 self.last_execution[execution_key] = current_time
-                logging.info(f"[EXECUTE] ✅ Task '{task_name}' completed successfully")
+                logging.info(f"[EXECUTE] ✅ Task '{task_name}' initiated successfully")
                 
                 # Clean up old executions
                 if len(self.last_execution) > 1000:

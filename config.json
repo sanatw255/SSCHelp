@@ -18,7 +18,7 @@
   "opening_message": "$add-money-role cash <@&1371908000540917820> 10e9",
   "closing_message": "The casino will be opened tomorrow at 7 PM.",
   "auto_cash": {
-    "enabled": false,
+    "enabled": true,
     "time": "10:00 AM",
     "channel_id": "1368277795855143103",
     "command_template": "$add-money-role cash <@&1371908000540917820> {amount}",
@@ -33,14 +33,14 @@
     }
   },
   "cash_checks": {
-    "enabled": false,
+    "enabled": true,
     "check_interval_minutes": 30,
     "channel_id": "1404018554466074644",
     "bot_id": "292953664492929025",
     "command": "$add-money-role cash <@&1371908000540917820> {amount}"
   },
   "add_cash_to_roles": {
-    "enabled": false,
+    "enabled": true,
     "check_interval_minutes": 30,
     "channel_id": "1404018554466074644",
     "command": "$add-money-role cash <@&ROLEID> {amount}",

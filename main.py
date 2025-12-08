@@ -967,172 +967,73 @@ class DiscordPermissionScheduler:
         guild_id: str,
         reason: str = "Scheduled channel lock"
     ) -> bool:
-        """
-        Lock a channel by denying SEND_MESSAGES for @everyone and member roles
-        while preserving all other permissions and ensuring staff can still send.
+        """Lock a channel (deny SEND_MESSAGES for @everyone) - preserves other permissions"""
         
-        This fixes the bug where PUT would reset all role permissions.
-        Now uses PATCH with all existing overwrites preserved.
-        """
-        
-        # Step 1: Fetch current channel configuration
-        endpoint = f'{self.DISCORD_API_BASE}/channels/{channel_id}'
+        endpoint = f'{self.DISCORD_API_BASE}/channels/{channel_id}/permissions/{guild_id}'
         headers = self._get_discord_headers(self.discord_token)
         
-        try:
-            logging.info(f"[LOCK] Fetching current channel permissions for {channel_id}...")
-            response = self.session.get(endpoint, headers=headers, timeout=15)
-            
-            if response.status_code != 200:
-                logging.error(f"[LOCK] Failed to fetch channel {channel_id}: {response.status_code}")
-                logging.error(f"[LOCK] Response: {response.text}")
-                return False
-            
-            channel_data = response.json()
-            permission_overwrites = channel_data.get('permission_overwrites', [])
-            logging.info(f"[LOCK] Found {len(permission_overwrites)} existing permission overwrites")
-            
-            # Get role configuration
-            lock_settings = self.config.get('channel_lock_settings', {})
-            staff_role_ids = lock_settings.get('staff_role_ids', [])
-            member_role_ids = lock_settings.get('member_role_ids', [])
-            
-            logging.info(f"[LOCK] Staff roles: {len(staff_role_ids)}, Member roles: {len(member_role_ids)}")
-            
-            # SEND_MESSAGES permission bit
-            SEND_MESSAGES = 1 << 11  # 2048
-            
-            # Step 2: Process @everyone overwrite
-            everyone_overwrite = None
-            for overwrite in permission_overwrites:
-                if overwrite['id'] == guild_id:
-                    everyone_overwrite = overwrite
-                    break
-            
-            if everyone_overwrite is None:
-                logging.info(f"[LOCK] Creating new @everyone overwrite")
-                everyone_overwrite = {
-                    'id': guild_id,
-                    'type': 0,
-                    'allow': '0',
-                    'deny': '0'
-                }
-                permission_overwrites.append(everyone_overwrite)
-            else:
-                logging.info(f"[LOCK] Modifying existing @everyone overwrite")
-            
-            # Deny SEND_MESSAGES for @everyone
-            current_deny = int(everyone_overwrite.get('deny', '0'))
-            current_allow = int(everyone_overwrite.get('allow', '0'))
-            
-            new_deny = current_deny | SEND_MESSAGES
-            new_allow = current_allow & ~SEND_MESSAGES
-            
-            everyone_overwrite['deny'] = str(new_deny)
-            everyone_overwrite['allow'] = str(new_allow)
-            
-            logging.info(f"[LOCK] @everyone: deny SEND_MESSAGES")
-            
-            # Step 3: Ensure staff roles can send
-            for staff_role_id in staff_role_ids:
-                staff_overwrite = None
-                for overwrite in permission_overwrites:
-                    if overwrite['id'] == staff_role_id:
-                        staff_overwrite = overwrite
-                        break
+        if reason:
+            headers['X-Audit-Log-Reason'] = reason
+        
+        payload = {
+            'type': 0,  # 0 = role, 1 = member
+            'deny': str(1 << 11),  # SEND_MESSAGES = 2048
+        }
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                time.sleep(random.uniform(0.1, 0.5))
                 
-                if staff_overwrite is None:
-                    logging.info(f"[LOCK] Creating new overwrite for staff role {staff_role_id}")
-                    staff_overwrite = {
-                        'id': staff_role_id,
-                        'type': 0,
-                        'allow': str(SEND_MESSAGES),
-                        'deny': '0'
-                    }
-                    permission_overwrites.append(staff_overwrite)
-                else:
-                    # Ensure SEND_MESSAGES is  in allow
-                    current_allow = int(staff_overwrite.get('allow', '0'))
-                    current_deny = int(staff_overwrite.get('deny', '0'))
-                    
-                    new_allow = current_allow | SEND_MESSAGES
-                    new_deny = current_deny & ~SEND_MESSAGES
-                    
-                    staff_overwrite['allow'] = str(new_allow)
-                    staff_overwrite['deny'] = str(new_deny)
-                    
-                    logging.info(f"[LOCK] Staff role {staff_role_id}: allow SEND_MESSAGES")
-            
-            # Step 4: Deny SEND_MESSAGES for member roles
-            for member_role_id in member_role_ids:
-                member_overwrite = None
-                for overwrite in permission_overwrites:
-                    if overwrite['id'] == member_role_id:
-                        member_overwrite = overwrite
-                        break
-                
-                if member_overwrite is None:
-                    logging.info(f"[LOCK] Creating new overwrite for member role {member_role_id}")
-                    member_overwrite = {
-                        'id': member_role_id,
-                        'type': 0,
-                        'allow': '0',
-                        'deny': str(SEND_MESSAGES)
-                    }
-                    permission_overwrites.append(member_overwrite)
-                else:
-                    # Add SEND_MESSAGES to deny, preserve other permissions
-                    current_deny = int(member_overwrite.get('deny', '0'))
-                    current_allow = int(member_overwrite.get('allow', '0'))
-                    
-                    new_deny = current_deny | SEND_MESSAGES
-                    new_allow = current_allow & ~SEND_MESSAGES
-                    
-                    member_overwrite['deny'] = str(new_deny)
-                    member_overwrite['allow'] = str(new_allow)
-                    
-                    logging.info(f"[LOCK] Member role {member_role_id}: deny SEND_MESSAGES")
-            
-            # Step 5: PATCH channel with all overwrites preserved
-            if reason:
-                headers['X-Audit-Log-Reason'] = reason
-            
-            payload = {'permission_overwrites': permission_overwrites}
-            
-            logging.info(f"[LOCK] Applying {len(permission_overwrites)} permission overwrites to channel...")
-            
-            response = self.session.patch(
-                endpoint,
-                headers=headers,
-                json=payload,
-                timeout=15
-            )
-            
-            if self._handle_rate_limit(response, endpoint):
-                time.sleep(2)
-                response = self.session.patch(
+                response = self.session.put(  # ✅ PUT, not PATCH
                     endpoint,
                     headers=headers,
                     json=payload,
                     timeout=15
                 )
-            
-            if response.status_code in [200, 204]:
-                logging.info(f"[SUCCESS] Channel {channel_id} LOCKED (all permissions preserved)")
-                logging.info(f"[LOCK] ✅ @everyone: denied")
-                logging.info(f"[LOCK] ✅ Staff roles ({len(staff_role_ids)}): can send")
-                logging.info(f"[LOCK] ✅ Member roles ({len(member_role_ids)}): denied")
-                return True
-            else:
-                logging.error(f"[ERROR] Failed to lock channel: {response.status_code}")
-                logging.error(f"[ERROR] Response: {response.text}")
+                
+                if self._handle_rate_limit(response, endpoint):
+                    continue
+                
+                if response.status_code in [200, 204]:
+                    logging.info(f"[SUCCESS] Channel {channel_id} LOCKED (preserved other permissions)")
+                    return True
+                
+                elif response.status_code == 401:
+                    logging.error(f"[ERROR] Unauthorized - Invalid token")
+                    return False
+                
+                elif response.status_code == 403:
+                    logging.error(f"[ERROR] Forbidden - Insufficient permissions")
+                    return False
+                
+                elif response.status_code == 404:
+                    logging.error(f"[ERROR] Channel {channel_id} not found")
+                    return False
+                
+                else:
+                    logging.error(f"[ERROR] API Error {response.status_code}: {response.text}")
+                    
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) + random.uniform(0, 1)
+                        logging.info(f"Retrying in {wait_time:.2f}s...")
+                        time.sleep(wait_time)
+                        continue
+                    
+                    return False
+                    
+            except requests.exceptions.Timeout:
+                logging.error(f"[ERROR] Request timeout (attempt {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
                 return False
                 
-        except Exception as e:
-            logging.error(f"[ERROR] Exception in lock_channel: {str(e)}")
-            import traceback
-            logging.error(traceback.format_exc())
-            return False
+            except requests.exceptions.RequestException as e:
+                logging.error(f"[ERROR] Request exception: {str(e)}")
+                return False
+        
+        return False
 
     def unlock_channel(
         self,
@@ -1140,128 +1041,73 @@ class DiscordPermissionScheduler:
         guild_id: str,
         reason: str = "Scheduled channel unlock"
     ) -> bool:
-        """
-        Unlock a channel by allowing SEND_MESSAGES for @everyone and removing
-        deny from member roles while preserving all other permissions.
+        """Unlock a channel (allow SEND_MESSAGES for @everyone) - preserves other permissions"""
         
-        Staff roles keep their permissions unchanged.
-        """
-        
-        # Step 1: Fetch current channel configuration
-        endpoint = f'{self.DISCORD_API_BASE}/channels/{channel_id}'
+        endpoint = f'{self.DISCORD_API_BASE}/channels/{channel_id}/permissions/{guild_id}'
         headers = self._get_discord_headers(self.discord_token)
         
-        try:
-            logging.info(f"[UNLOCK] Fetching current channel permissions for {channel_id}...")
-            response = self.session.get(endpoint, headers=headers, timeout=15)
-            
-            if response.status_code != 200:
-                logging.error(f"[UNLOCK] Failed to fetch channel {channel_id}: {response.status_code}")
-                logging.error(f"[UNLOCK] Response: {response.text}")
-                return False
-            
-            channel_data = response.json()
-            permission_overwrites = channel_data.get('permission_overwrites', [])
-            logging.info(f"[UNLOCK] Found {len(permission_overwrites)} existing permission overwrites")
-            
-            # Get role configuration
-            lock_settings = self.config.get('channel_lock_settings', {})
-            member_role_ids = lock_settings.get('member_role_ids', [])
-            
-            logging.info(f"[UNLOCK] Member roles to unlock: {len(member_role_ids)}")
-            
-            # SEND_MESSAGES permission bit
-            SEND_MESSAGES = 1 << 11  # 2048
-            
-            # Step 2: Process @everyone overwrite - allow SEND_MESSAGES
-            everyone_overwrite = None
-            for overwrite in permission_overwrites:
-                if overwrite['id'] == guild_id:
-                    everyone_overwrite = overwrite
-                    break
-            
-            if everyone_overwrite is None:
-                logging.info(f"[UNLOCK] Creating new @everyone overwrite")
-                everyone_overwrite = {
-                    'id': guild_id,
-                    'type': 0,
-                    'allow': str(SEND_MESSAGES),
-                    'deny': '0'
-                }
-                permission_overwrites.append(everyone_overwrite)
-            else:
-                logging.info(f"[UNLOCK] Modifying existing @everyone overwrite")
-                # Allow SEND_MESSAGES for @everyone
-                current_deny = int(everyone_overwrite.get('deny', '0'))
-                current_allow = int(everyone_overwrite.get('allow', '0'))
+        if reason:
+            headers['X-Audit-Log-Reason'] = reason
+        
+        payload = {
+            'type': 0,  # 0 = role, 1 = member
+            'allow': str(1 << 11),  # SEND_MESSAGES = 2048
+        }
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                time.sleep(random.uniform(0.1, 0.5))
                 
-                new_allow = current_allow | SEND_MESSAGES
-                new_deny = current_deny & ~SEND_MESSAGES
-                
-                everyone_overwrite['allow'] = str(new_allow)
-                everyone_overwrite['deny'] = str(new_deny)
-            
-            logging.info(f"[UNLOCK] @everyone: allow SEND_MESSAGES")
-            
-            # Step 3: Remove SEND_MESSAGES deny from member roles
-            for member_role_id in member_role_ids:
-                member_overwrite = None
-                for overwrite in permission_overwrites:
-                    if overwrite['id'] == member_role_id:
-                        member_overwrite = overwrite
-                        break
-                
-                if member_overwrite is not None:
-                    # Remove SEND_MESSAGES from deny, preserve other permissions
-                    current_deny = int(member_overwrite.get('deny', '0'))
-                    current_allow = int(member_overwrite.get('allow', '0'))
-                    
-                    new_deny = current_deny & ~SEND_MESSAGES
-                    # Don't add to allow - let them inherit from @everyone
-                    
-                    member_overwrite['deny'] = str(new_deny)
-                    
-                    logging.info(f"[UNLOCK] Member role {member_role_id}: removed SEND_MESSAGES deny")
-            
-            # Step 4: PATCH channel with all overwrites preserved
-            if reason:
-                headers['X-Audit-Log-Reason'] = reason
-            
-            payload = {'permission_overwrites': permission_overwrites}
-            
-            logging.info(f"[UNLOCK] Applying {len(permission_overwrites)} permission overwrites to channel...")
-            
-            response = self.session.patch(
-                endpoint,
-                headers=headers,
-                json=payload,
-                timeout=15
-            )
-            
-            if self._handle_rate_limit(response, endpoint):
-                time.sleep(2)
-                response = self.session.patch(
+                response = self.session.put(  # ✅ PUT, not PATCH
                     endpoint,
                     headers=headers,
                     json=payload,
                     timeout=15
                 )
-            
-            if response.status_code in [200, 204]:
-                logging.info(f"[SUCCESS] Channel {channel_id} UNLOCKED (all permissions preserved)")
-                logging.info(f"[UNLOCK] ✅ @everyone: allowed")
-                logging.info(f"[UNLOCK] ✅ Member roles ({len(member_role_ids)}): allowed")
-                return True
-            else:
-                logging.error(f"[ERROR] Failed to unlock channel: {response.status_code}")
-                logging.error(f"[ERROR] Response: {response.text}")
+                
+                if self._handle_rate_limit(response, endpoint):
+                    continue
+                
+                if response.status_code in [200, 204]:
+                    logging.info(f"[SUCCESS] Channel {channel_id} UNLOCKED (preserved other permissions)")
+                    return True
+                
+                elif response.status_code == 401:
+                    logging.error(f"[ERROR] Unauthorized - Invalid token")
+                    return False
+                
+                elif response.status_code == 403:
+                    logging.error(f"[ERROR] Forbidden - Insufficient permissions")
+                    return False
+                
+                elif response.status_code == 404:
+                    logging.error(f"[ERROR] Channel {channel_id} not found")
+                    return False
+                
+                else:
+                    logging.error(f"[ERROR] API Error {response.status_code}: {response.text}")
+                    
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) + random.uniform(0, 1)
+                        logging.info(f"Retrying in {wait_time:.2f}s...")
+                        time.sleep(wait_time)
+                        continue
+                    
+                    return False
+                    
+            except requests.exceptions.Timeout:
+                logging.error(f"[ERROR] Request timeout (attempt {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
                 return False
                 
-        except Exception as e:
-            logging.error(f"[ERROR] Exception in unlock_channel: {str(e)}")
-            import traceback
-            logging.error(traceback.format_exc())
-            return False
+            except requests.exceptions.RequestException as e:
+                logging.error(f"[ERROR] Request exception: {str(e)}")
+                return False
+        
+        return False
     
     def parse_time_format(self, time_str: str) -> Dict[str, int]:
         """Parse time string formats"""
